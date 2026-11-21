@@ -1180,6 +1180,64 @@ def test_missing_envvar(runner):
     assert "Error: Missing option '--foo'." in result.output
 
 
+def test_missing_envvar_auto_prefix(runner):
+    cli = click.Command(
+        "cli",
+        params=[click.Option(["--foo"], show_envvar=True, required=True)],
+        context_settings={"auto_envvar_prefix": "MYAPP"},
+    )
+    result = runner.invoke(cli)
+    assert result.exit_code == 2
+    assert "Error: Missing option '--foo' (env var: 'MYAPP_FOO')." in result.output
+
+    # When allow_from_autoenv=False, auto_envvar_prefix is not used
+    cli_no_autoenv = click.Command(
+        "cli",
+        params=[
+            click.Option(
+                ["--foo"],
+                show_envvar=True,
+                required=True,
+                allow_from_autoenv=False,
+            )
+        ],
+        context_settings={"auto_envvar_prefix": "MYAPP"},
+    )
+    result = runner.invoke(cli_no_autoenv)
+    assert result.exit_code == 2
+    assert "Error: Missing option '--foo'." in result.output
+
+    # Subcommand prefix derivation
+    @click.group()
+    def group():
+        pass
+
+    @group.command()
+    @click.option("--baz", show_envvar=True, required=True)
+    def foo_bar(baz):
+        pass
+
+    result = runner.invoke(group, ["foo-bar"], auto_envvar_prefix="TEST")
+    assert result.exit_code == 2
+    assert (
+        "Error: Missing option '--baz' (env var: 'TEST_FOO_BAR_BAZ')." in result.output
+    )
+
+
+def test_invalid_value_envvar_auto_prefix(runner):
+    @click.command(context_settings={"auto_envvar_prefix": "MYAPP"})
+    @click.option("--port", type=int, show_envvar=True)
+    def cli(port):
+        pass
+
+    result = runner.invoke(cli, ["--port", "abc"])
+    assert result.exit_code == 2
+    assert (
+        "Error: Invalid value for '--port' (env var: 'MYAPP_PORT'): 'abc' is not a"
+        " valid integer." in result.output
+    )
+
+
 @pytest.mark.parametrize(
     ("envvar", "expected"),
     [
@@ -1197,6 +1255,21 @@ def test_missing_envvar_sequence(runner, envvar, expected):
     result = runner.invoke(click.Command("cli", params=[option]))
     assert result.exit_code == 2
     assert f"Error: Missing option {expected}." in result.output
+
+
+@pytest.mark.parametrize("envvar", [None, [], ""])
+def test_missing_envvar_empty_with_auto_prefix(runner, envvar):
+    """An empty ``envvar`` shows the derived variable in error hints when
+    auto_prefix is set.
+    """
+    option = click.Option(["--units"], envvar=envvar, show_envvar=True, required=True)
+    result = runner.invoke(
+        click.Command("cli", params=[option]), auto_envvar_prefix="WEATHER"
+    )
+    assert result.exit_code == 2
+    assert (
+        "Error: Missing option '--units' (env var: 'WEATHER_UNITS')." in result.output
+    )
 
 
 def test_case_insensitive_choice(runner):
